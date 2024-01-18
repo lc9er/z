@@ -110,18 +110,18 @@ function z {
             If ($OnlyCurrentDirectory) {
                 $providerRegex = (Get-FormattedLocation).replace('\','\\') + '\\.*?'
             } else {
-                $providerRegex = Get-CurrentSessionProviderDrives ((Get-PSProvider).Drives | select -ExpandProperty Name)
+                $providerRegex = Get-CurrentSessionProviderDrives ((Get-PSProvider).Drives | Select-Object -ExpandProperty Name)
             }
 
             $list = @()
 
             $global:history |
-                ? { Get-DirectoryEntryMatchPredicate -path $_.Path -jumpPath $JumpPath -ProviderRegex $providerRegex } | Get-ArgsFilter -Option $Option |
-                % { if ($ListFiles -or (Test-Path $_.Path.FullName)) {$list += $_} }
+                Where-Object { Get-DirectoryEntryMatchPredicate -path $_.Path -jumpPath $JumpPath -ProviderRegex $providerRegex } | Get-ArgsFilter -Option $Option |
+                ForEach-Object { if ($ListFiles -or (Test-Path $_.Path.FullName)) {$list += $_} }
 
             if ($ListFiles) {
 
-                $newList = $list | % { New-Object PSObject -Property  @{Rank = $_.Rank; Path = $_.Path.FullName; LastAccessed = [DateTime]$_.Time } }
+                $newList = $list | ForEach-Object { New-Object PSObject -Property  @{Rank = $_.Rank; Path = $_.Path.FullName; LastAccessed = [DateTime]$_.Time } }
                 Format-Table -InputObject $newList -AutoSize
 
             } else {
@@ -136,7 +136,7 @@ function z {
 
                 } else {
                     if ($list.Length -gt 1) {
-                        $entry = $list | Sort-Object -Descending { $_.Score } | select -First 1
+                        $entry = $list | Sort-Object -Descending { $_.Score } | Select-Object -First 1
 
                     } else {
                         $entry = $list[0]
@@ -355,7 +355,7 @@ function Get-CurrentSessionProviderDrives([System.Collections.ArrayList] $Provid
         # An ideal solution would be to ask the provider if a path is supported.
         # Supports drives such as C:\ and also UNC \\
         if ((Get-Location).Provider.ImplementingType.Name -eq 'FileSystemProvider') {
-            '(?i)^(((' + [String]::Concat( ((Get-Location).Provider.Drives.Name | % { $_ + '|' }) ).TrimEnd('|') + '):\\)|(\\{1,2})).*?'
+            '(?i)^(((' + [String]::Concat( ((Get-Location).Provider.Drives.Name | ForEach-Object { $_ + '|' }) ).TrimEnd('|') + '):\\)|(\\{1,2})).*?'
         } else {
             Get-ProviderDrivesRegex (Get-Location).Provider.Drives
         }
@@ -373,7 +373,7 @@ function Get-ProviderDrivesRegex([System.Collections.ArrayList] $ProviderDrives)
         '(?i)^(\\{1,2}).*?'
     } else {
         $uncRootPathRegex = '|(\\{1,2})'
-        '(?i)^((' + [String]::Concat( ($ProviderDrives | % { $_ + '|' }) ).TrimEnd('|') + '):\\)' + $uncRootPathRegex + '.*?'
+        '(?i)^((' + [String]::Concat( ($ProviderDrives | ForEach-Object { $_ + '|' }) ).TrimEnd('|') + '):\\)' + $uncRootPathRegex + '.*?'
     }
 }
 
@@ -382,19 +382,20 @@ function Get-Frecency($rank, $time) {
     # Last access date/time
     $dx = (Get-Date).Subtract((New-Object System.DateTime -ArgumentList $time)).TotalSeconds
 
-    if( $dx -lt 3600 ) { return $rank*4 }
+    $score = switch ($dx) 
+    {
+        {$_ -lt 3000 }   { $rank * 4; break }
+        {$_ -lt 86400 }  { $rank * 2; break }
+        {$_ -lt 604800 } { $rank / 2; break }
+        default          { $rank / 4 }
+    }
 
-    if( $dx -lt 86400 ) { return $rank*2 }
-
-    if( $dx -lt 604800 ) { return $rank/2 }
-
-    return $rank/4
+    return $score
 }
 
 function Cleanup-CdCommandHistory() {
 
     try {
-
         for($i = 0; $i -lt $global:history.Length; $i++) {
 
             $line = $global:history[$i]
@@ -417,7 +418,7 @@ function Cleanup-CdCommandHistory() {
 
 function Remove-Old-History() {
     if ($global:history.Length -gt 1000) {
-        $global:history | ? { $_ -ne $null } | % {$i = 0} {
+        $global:history | Where-Object { $_ -ne $null } | ForEach-Object {$i = 0} {
 
             $lineObj = $_
             $lineObj.Rank = $lineObj.Rank * 0.99
@@ -503,14 +504,14 @@ function WriteHistoryToDisk() {
 }
 
 function GetAllHistoryAsText($history) {
-    return $history | ? { $_ -ne $null } | % { ConvertTo-TextualHistoryEntry $_.Rank $_.Path.FullName $_.Time }
+    return $history | Where-Object { $_ -ne $null } | ForEach-Object { ConvertTo-TextualHistoryEntry $_.Rank $_.Path.FullName $_.Time }
 }
 
 function Get-FormattedLocation() {
     if ((Get-Location).Provider.ImplementingType.Name -eq 'FileSystemProvider' -and (Get-Location).Path.Contains('FileSystem::\\')) {
-        Get-Location | select -ExpandProperty ProviderPath # The registry provider does return a path which z understands. In other words, I'm too lazy.
+        Get-Location | Select-Object -ExpandProperty ProviderPath # The registry provider does return a path which z understands. In other words, I'm too lazy.
     } else {
-        Get-Location | select -ExpandProperty Path
+        Get-Location | Select-Object -ExpandProperty Path
     }
 }
 
@@ -584,9 +585,9 @@ function GetRankFromLine([String]$line) {
 
 function Get-MostRecentDirectoryEntries {
 
-    $mruEntries = (Get-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths | % { $item = $_; $_.GetValueNames() | % { $item.GetValue($_) } })
+    $mruEntries = (Get-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths | ForEach-Object { $item = $_; $_.GetValueNames() | ForEach-Object { $item.GetValue($_) } })
 
-    $mruEntries | % { ConvertTo-TextualHistoryEntry 1 $_ }
+    $mruEntries | ForEach-Object { ConvertTo-TextualHistoryEntry 1 $_ }
 }
 
 function Get-ArgsFilter {
@@ -622,7 +623,7 @@ function Get-ArgsFilter {
 # Get cdHistory and hydrate a in-memory collection
 $global:history = @()
 if ((Test-Path -Path $cdHistory)) {
-  $global:history += Get-Content -Path $cdHistory -Encoding UTF8 | ? { (-not [String]::IsNullOrWhiteSpace($_)) } | ConvertTo-DirectoryEntry
+  $global:history += Get-Content -Path $cdHistory -Encoding UTF8 | Where-Object { (-not [String]::IsNullOrWhiteSpace($_)) } | ConvertTo-DirectoryEntry
 }
 
 $orig_cd = (Get-Alias -Name 'cd').Definition
